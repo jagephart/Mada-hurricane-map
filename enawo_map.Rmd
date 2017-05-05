@@ -1,0 +1,187 @@
+---
+title: "EnawoMap"
+author: "Kelly Hondula"
+date: "5/5/2017"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+```
+
+Load up some libraries
+
+```{r}
+library(leaflet)
+library(sp)
+library(rgdal)
+```
+
+# Data sources
+
+## UNOSAT data
+
+Inundation shapefiles developed by UNOSAT downloaded from [here](http://www.unitar.org/unosat/maps/MDG).
+
+* `flooding03010`: flooding extent on March 10th
+* `extent0310`: bounding box of flooding extent analyzed on March 10th
+* `flooding0308`: flooding extent on March 8th
+* `extent0308`: bounding box of flooding extent analyzed on March 8th
+* `floodbase_2014`: normal amount of flooding
+
+
+```{r}
+flooding0310 <- readOGR("TC20170306MDG_SHP",
+                  "TSX_20170310_SatelliteDetectedSurfaceWaters_Maroantsetra")
+extent0310 <- readOGR("TC20170306MDG_SHP",
+                      "TSX_20170310_Analysis_Extent")
+flooding0308 <- readOGR("TC20170306MDG_SHP",
+                        "TSX_20170308_SatelliteDetectedSurfaceWaters_Maroantsetra")
+extent0308 <- readOGR("TC20170306MDG_SHP",
+                      "TSX_20170308_RS2_20140504_Analysis_Extent")
+floodbase_2014 <- readOGR("TC20170306MDG_SHP",
+                          "RS2_20140504_SatelliteDetectedSurfaceWaters_Maroantsetra")
+```
+
+## Village locations
+
+Read in data with coordinates of villages
+
+```{r}
+darwinpts <- read.csv(file = "darwin2.csv", stringsAsFactors = FALSE)
+
+darwinpts$lat <- sapply(darwinpts$S, function(x) {
+  -1*(as.numeric(unlist(strsplit(x, " "))[1])+
+        as.numeric(unlist(strsplit(x, " "))[2])/60 +
+        as.numeric(unlist(strsplit(x, " "))[3])/3600)
+})  
+
+darwinpts$lon <- sapply(darwinpts$E, function(x) {
+  as.numeric(unlist(strsplit(x, " "))[1])+
+    as.numeric(unlist(strsplit(x, " "))[2])/60 +
+    as.numeric(unlist(strsplit(x, " "))[3])/3600
+})
+```
+
+## Hurricane Track
+
+```{r}
+# Hurricane track data: http://weather.unisys.com/hurricane/s_indian/2017/ENAWO/track.dat
+# Using method from `https://rud.is/b/2015/08/20/track-hurricane-danny-with-r-leaflet/`
+
+library(stringi)
+enawo_track <- 
+  readLines("http://weather.unisys.com/hurricane/s_indian/2017/ENAWO/track.dat")
+
+enawo_track <- read.table(textConnection(gsub("TROPICAL ", "TROPICAL_", enawo_track[3:length(enawo_track)])), 
+                          header=TRUE, stringsAsFactors=FALSE)
+
+# make storm type names prettier
+enawo_track$STAT <- stri_trans_totitle(gsub("_", " ", enawo_track$STAT))
+
+# make column names prettier
+colnames(enawo_track) <- c("advisory", "lat", "lon", "time", "wind_speed", "pressure", "status")
+
+```
+
+# Maps
+
+```{r}
+leaflet() %>% 
+  addTiles(group = "OSM (default)") %>%
+  addProviderTiles("Esri.WorldImagery", group = "Esri base") %>%
+  addMarkers(data=darwinpts, ~lon, ~lat, group = "villages as markers", popup = ~Village) %>%
+  addPolylines(data=enawo_track, ~lon, ~lat, color = "yellow", group = "path") %>%
+  addPolygons(data = flooding0310, col = "red", group = "Flood Mar 10" ) %>%
+  addPolygons(data = flooding0308, col = "purple", group = "Flood Mar 08") %>%
+  addPolygons(data = extent0310, col = "black", fillOpacity = 0) %>%
+  addPolygons(data = extent0308, col = "black", fillOpacity = 0) %>%
+  addPolygons(data = floodbase_2014, col = "blue", group = "Flood 2014") %>%  addTiles(paste0('http://map1{s}.vis.earthdata.nasa.gov/wmts-webmerc/',
+                  "VIIRS_SNPP_CorrectedReflectance_TrueColor",
+                  '/default/',
+                  "2017-03-07",'/',
+                  "GoogleMapsCompatible_Level9",'/{z}/{y}/{x}.',"jpeg"),
+           attribution = paste(
+             '<a href="https://earthdata.nasa.gov/gibs">NASA EOSDIS GIBS</a>'
+           ),
+           options = list(
+             # maxZoom = zoomLvl,
+             minZoom = 1,
+             tileSize = 256,
+             subdomains = "abc",
+             noWrap = "true",
+             crs = "L.CRS.EPSG3857",    
+             continuousWorld = "true",
+             # Prevent Leaflet from retrieving non-existent tiles on the borders.
+             bounds = list(list(-85.0511287776, -179.999999975),
+                           list(85.0511287776, 179.999999975))
+           ), group = "VIIRS") %>%
+  addTiles(paste0('http://map1.vis.earthdata.nasa.gov/wmts-webmerc/',
+                  "AMSR2_Surface_Precipitation_Rate_Day",
+                  '/default/',
+                  "2017-03-07",'/',
+                  "GoogleMapsCompatible_Level6",
+                  '/{z}/{y}/{x}.'
+                  ,"png"),
+           options = list(
+             # maxZoom = 9,
+             # maxNativeZoom = olzoomLvl[i],
+             minZoom = 1,
+             tileSize = 256,
+             subdomains = "abc",
+             noWrap = "true",
+             crs = "L.CRS.EPSG3857",    
+             continuousWorld = "true",
+             opacity = 0.6,
+             # Prevent Leaflet from retrieving non-existent tiles on the borders.
+             bounds = list(list(-85.0511287776, -179.999999975),
+                           list(85.0511287776, 179.999999975))
+           ), group = "Surface Precip") %>%
+  addTiles(paste0('http://map1.vis.earthdata.nasa.gov/wmts-webmerc/',
+                  "AMSR2_Surface_Precipitation_Rate_Night",
+                  '/default/',
+                  "2017-03-07",'/',
+                  "GoogleMapsCompatible_Level6",
+                  '/{z}/{y}/{x}.'
+                  ,"png"),
+           options = list(
+             # maxZoom = 9,
+             # maxNativeZoom = olzoomLvl[i],
+             minZoom = 1,
+             tileSize = 256,
+             subdomains = "abc",
+             noWrap = "true",
+             crs = "L.CRS.EPSG3857",    
+             continuousWorld = "true",
+             opacity = 0.6,
+             # Prevent Leaflet from retrieving non-existent tiles on the borders.
+             bounds = list(list(-85.0511287776, -179.999999975),
+                           list(85.0511287776, 179.999999975))
+           ), group = "Surface Precip") %>%
+  addTiles(paste0('https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/Coastlines/default/',
+                  "GoogleMapsCompatible_Level9",
+                  '/{z}/{y}/{x}.'
+                  ,"png"),
+           options = list(
+             # maxZoom = 9,
+             # maxNativeZoom = olzoomLvl[i],
+             minZoom = 1,
+             tileSize = 256,
+             subdomains = "abc",
+             noWrap = "true",
+             crs = "L.CRS.EPSG3857",    
+             continuousWorld = "true",
+             opacity = 0.6,
+             # Prevent Leaflet from retrieving non-existent tiles on the borders.
+             bounds = list(list(-85.0511287776, -179.999999975),
+                           list(85.0511287776, 179.999999975))
+           ), group = "coast") %>%
+  addLayersControl(
+    baseGroups = c("OSM (default)", "Esri base", "VIIRS"),
+    overlayGroups = c("coast", "Surface Precip", "villages as markers", "villages as circles", "path"),
+    options = layersControlOptions(collapsed = TRUE))
+```
+
